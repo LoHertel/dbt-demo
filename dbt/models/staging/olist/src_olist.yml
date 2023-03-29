@@ -1,0 +1,289 @@
+version: 2
+
+sources:
+
+  - name: olist
+    schema: raw
+    description: | 
+      **Brazilian E-Commerce Public Dataset by Olist from kaggle**  
+      This dataset contains order data from an online shop from 2016 to 2018.
+      Source: https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce
+    loader: prepare_data.py
+    
+    tables:
+
+      - name: orders
+        identifier: raw_olist__orders
+        description: |
+          Contains the order head information.
+          Each order could contain multiple line items, which are stored in a seperate table.
+        
+        loaded_at_field: order_purchase_timestamp
+        freshness:
+            warn_after: {count: 1, period: day}
+            error_after: {count: 2, period: day}
+        
+        external:
+          location: 'gs://olist-orders-dataset/orders.parquet/*'
+          options:
+            format: 'PARQUET'
+            hive_partition_uri_prefix: 'gs://olist-orders-dataset/orders.parquet'
+            require_hive_partition_filter: false
+          partitions:
+            - name: year
+              data_type: INTEGER
+        
+        columns: 
+          - name: order_id
+            description: Unique identifier of the order (primary key).
+            data_type: STRING
+            tests:
+              - unique
+              - not_null
+
+          - name: customer_id
+            description: Key to the customer dataset. Each order has a unique customer_id.
+            data_type: STRING
+            tests:
+              - not_null
+              - relationships:
+                  to: source('olist', 'customers')
+                  field: customer_id
+
+          - name: order_status
+            description: Reference to the order status (delivered, shipped, etc).
+            data_type: STRING
+            tests:
+              - not_null
+              - accepted_values: 
+                  values: [processing, delivered, canceled, shipped, invoiced, unavailable, created, approved]
+                  name: source_accepted_values_olist_stg_orders_order_status
+
+          - name: order_purchase_timestamp
+            description: Shows the purchase timestamp.
+            data_type: TIMESTAMP
+            tests:
+              - not_null
+
+          - name: order_approved_at
+            description: Shows the payment approval timestamp.
+            data_type: TIMESTAMP
+            tests:
+              - not_null:
+                  name: missing_payments_four_weeks_after_purchase
+                  config:
+                    where: "DATE(order_purchase_timestamp) < DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)"
+                    severity: warn
+                    warn_if: ">100"
+
+          - name: order_delivered_carrier_date
+            description: Shows the order posting timestamp. When it was handled to the logistic partner.
+            data_type: TIMESTAMP
+
+          - name: order_delivered_customer_date
+            description: Shows the actual order delivery date to the customer.
+            data_type: TIMESTAMP
+
+          - name: order_estimated_delivery_date
+            description: Shows the estimated delivery date that was informed to customer at the purchase moment.
+            data_type: TIMESTAMP
+            tests:
+              - not_null
+      
+      - name: order_items
+        identifier: raw_olist__order_items
+        description: >
+          Contains the order line items.
+          Each order could line items is associated with a order.
+        
+        external:
+          location: 'gs://olist-orders-dataset/order_items.parquet/*'
+          options:
+            format: 'PARQUET'
+            hive_partition_uri_prefix: 'gs://olist-orders-dataset/order_items.parquet'
+            require_hive_partition_filter: false
+          partitions:
+            - name: year
+              data_type: INTEGER
+        
+        columns: 
+          - name: order_id
+            description: Unique identifier of the order (foreign key).
+            data_type: STRING
+            tests:
+              - not_null
+              - relationships:
+                  to: source('olist', 'orders')
+                  field: order_id
+          
+          - name: order_item_id
+            description: Sequential number identifying number of items included in the same order.
+            data_type: INTEGER
+            tests:
+              - not_null
+
+          - name: product_id
+            description: Product unique identifier (foreign key).
+            data_type: STRING
+            tests:
+              - not_null
+              - relationships:
+                  to: source('olist', 'products')
+                  field: product_id
+          
+          - name: seller_id
+            description: Seller unique identifier
+            data_type: STRING
+            tests:
+              - not_null
+          
+          - name: shipping_limit_date
+            description: Shows the seller shipping limit date for handing the order over to the logistic partner.
+            data_type: TIMESTAMP
+            tests:
+              - not_null
+          
+          - name: price
+            description: Item price
+            data_type: FLOAT64
+            tests:
+              - not_null
+          
+          - name: freight_value
+            description: Item freight value item (if an order has more than one item the freight value is splitted between items).
+            data_type: FLOAT64
+            tests:
+              - not_null
+
+      - name: customers
+        identifier: raw_olist__customers
+
+        description: >
+          This dataset has information about the customer and its location. 
+          Use it to identify unique customers in the orders dataset and to find the orders delivery location.
+        
+        external:
+          location: 'gs://olist-orders-dataset/customers.parquet'
+          options:
+            format: 'PARQUET'
+        
+        columns: 
+          - name: customer_id
+            description: Key to the orders dataset. Each order has a unique customer_id.
+            data_type: STRING
+            tests:
+              - unique
+              - not_null
+          
+          - name: customer_unique_id
+            description: Unique identifier of a customer.
+            data_type: STRING
+            tests:
+              - not_null
+          
+          - name: customer_zip_code_prefix
+            description: First five digits of customer zip code
+            data_type: INTEGER
+            tests:
+              - not_null
+          
+          - name: customer_city
+            description: Name of city where customer resides.
+            data_type: STRING
+            tests:
+              - not_null
+          
+          - name: customer_state
+            description: Abbreviation of state where customer resides.
+            data_type: STRING
+            tests:
+              - not_null
+              - relationships:
+                  to: ref('states')
+                  field: state_abbr
+      
+      - name: products
+        identifier: raw_olist__products
+        description: This dataset includes data about the products sold by Olist.
+        
+        external:
+          location: 'gs://olist-orders-dataset/products.parquet'
+          options:
+            format: 'PARQUET'
+        
+        columns: 
+          - name: product_id
+            description: Unique product identifier
+            data_type: STRING
+            tests:
+              - unique
+              - not_null
+
+          - name: product_category_name
+            description: Root category of product, in Portuguese.
+            data_type: STRING
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+              - relationships:
+                  to: ref('product_category_names')
+                  field: product_category_name_pt
+                  config:
+                    severity: warn
+          
+          - name: product_name_lenght
+            description: Number of characters extracted from the product name.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          
+          - name: product_description_lenght
+            description: Number of characters extracted from the product name.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+
+          - name: product_photos_qty
+            description: Number of product published photos
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          
+          - name: product_weight_g
+            description: Product weight measured in grams.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          
+          - name: product_length_cm
+            description: Product length measured in centimeters.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          
+          - name: product_height_cm
+            description: Product height measured in centimeters.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn
+          
+          - name: product_width_cm
+            description: Product width measured in centimeters.
+            data_type: FLOAT64
+            tests:
+              - not_null:
+                  config:
+                    severity: warn

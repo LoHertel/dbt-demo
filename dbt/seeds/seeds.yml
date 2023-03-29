@@ -1,0 +1,49 @@
+version: 2
+
+seeds:
+  - name: product_category_names
+    description: Category names of products in Portuguese, with corresponding English translation.
+    config:
+      alias: stg_seed__product_category_names
+      persist_docs:
+        relation: true
+        columns: true
+      quote_columns: true
+      schema: staging
+    
+    columns:
+      - name: product_category_name_pt
+        description: Category names in Portuguese.
+        tests: 
+          - unique
+          - not_null
+
+      - name: product_category_name_en
+        description: English translation of category names.
+        tests: 
+          - unique
+          - not_null
+
+  - name: states
+    description: List of Brazilian states with abbreviations.
+    config:
+      alias: stg_seed__states
+      persist_docs:
+        relation: true
+        columns: true
+      quote_columns: true
+      schema: staging
+    
+    columns:
+      - name: state_abbr
+        description: Two-letter codes for all Brazilian states.
+        tests: 
+          - unique
+          - not_null
+      
+      - name: state_name
+        description: Names of Brazilian states.
+        tests: 
+          - unique
+          - not_null
+      
