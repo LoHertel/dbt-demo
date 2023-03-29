@@ -1,0 +1,4 @@
+data/**
+
+!data/README.md
+!data/prepare_data.py
